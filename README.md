@@ -1,22 +1,26 @@
 # Redis Simple Message Queue
-[![Travis CI](https://img.shields.io/travis/eislambey/php-rsmq)](https://travis-ci.org/eislambey/php-rsmq)
-[![Codecov](https://img.shields.io/codecov/c/github/eislambey/php-rsmq)](https://codecov.io/gh/eislambey/php-rsmq)
 
 A lightweight message queue for PHP that requires no dedicated queue server. Just a Redis server.
 
 PHP implementation of [smrchy/rsmq](https://github.com/smrchy/rsmq)
 
+This is a fork of [eislambey/php-rsmq](https://github.com/eislambey/php-rsmq) with the following changes:
+
+- Supports RedisCluster by Redis extension
+
 ## Installation
-	composer require eislambey/rsmq
+    //add repo to composer repositories before
+	composer require pjm-invest/php-rsmq
 
 ## Methods
 
 ### Construct
+
 Creates a new instance of RSMQ.
 
 Parameters:
 
-* `$redis` (Redis): *required The Redis instance
+* `$redis` (Redis|RedisCluster): *required The Redis instance
 * `$ns` (string): *optional (Default: "rsmq")* The namespace prefix used for all keys created by RSMQ
 * `$realtime` (Boolean): *optional (Default: false)* Enable realtime PUBLISH of new messages
 
@@ -27,27 +31,33 @@ Example:
 
 $redis = new Redis();
 $redis->connect('127.0.0.1', 6379);
-$rsmq = new \Islambey\RSMQ\RSMQ($redis);
+$rsmq = new \PJM\RSMQ\RSMQ($redis);
 ```
 
 ### Queue
 
 #### createQueue
+
 Create a new queue.
 
 Parameters:
 
-* `$name` (string): The Queue name. Maximum 160 characters; alphanumeric characters, hyphens (-), and underscores (_) are allowed.
-* `$vt` (int): *optional* *(Default: 30)* The length of time, in seconds, that a message received from a queue will be invisible to other receiving components when they ask to receive messages. Allowed values: 0-9999999 (around 115 days)
-* `$delay` (int): *optional* *(Default: 0)* The time in seconds that the delivery of all new messages in the queue will be delayed. Allowed values: 0-9999999 (around 115 days)
-* `$maxsize` (int): *optional* *(Default: 65536)* The maximum message size in bytes. Allowed values: 1024-65536 and -1 (for unlimited size)
+* `$name` (string): The Queue name. Maximum 160 characters; alphanumeric characters, hyphens (-), and underscores (_)
+  are allowed.
+* `$vt` (int): *optional* *(Default: 30)* The length of time, in seconds, that a message received from a queue will be
+  invisible to other receiving components when they ask to receive messages. Allowed values: 0-9999999 (around 115 days)
+* `$delay` (int): *optional* *(Default: 0)* The time in seconds that the delivery of all new messages in the queue will
+  be delayed. Allowed values: 0-9999999 (around 115 days)
+* `$maxsize` (int): *optional* *(Default: 65536)* The maximum message size in bytes. Allowed values: 1024-65536 and -1 (
+  for unlimited size)
 
 Returns:
 
 * `true` (Bool)
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -58,6 +68,7 @@ $rsmq->createQueue('myqueue');
 ```
 
 #### listQueues
+
 List all queues
 
 Returns an array:
@@ -73,6 +84,7 @@ $queues = $rsmq->listQueues();
 ```
 
 #### deleteQueue
+
 Deletes a queue and all messages.
 
 Parameters:
@@ -83,10 +95,9 @@ Returns:
 
 * `true` (Bool)
 
-
 Throws:
 
-* `\Islambey\RSMQ\Exception`
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -97,6 +108,7 @@ $rsmq->deleteQueue('myqueue');
 ```
 
 #### getQueueAttributes
+
 Get queue attributes, counter and stats
 
 Parameters:
@@ -113,7 +125,8 @@ Returns an associative array:
 * `created` (float): Timestamp (epoch in seconds) when the queue was created
 * `modified` (float): Timestamp (epoch in seconds) when the queue was last modified with `setQueueAttributes`
 * `msgs` (int): Current number of messages in the queue
-* `hiddenmsgs` (int): Current number of hidden / not visible messages. A message can be hidden while "in flight" due to a `vt` parameter or when sent with a `delay`
+* `hiddenmsgs` (int): Current number of hidden / not visible messages. A message can be hidden while "in flight" due to
+  a `vt` parameter or when sent with a `delay`
 
 Example:
 
@@ -132,15 +145,17 @@ echo "current n of messages: ", $attributes['msgs'], "\n";
 echo "hidden messages: ", $attributes['hiddenmsgs'], "\n";
 ```
 
-
 #### setQueueAttributes
+
 Sets queue parameters.
 
 Parameters:
 
 * `$queue` (string): The Queue name.
-* `$vt` (int): *optional* * The length of time, in seconds, that a message received from a queue will be invisible to other receiving components when they ask to receive messages. Allowed values: 0-9999999 (around 115 days)
-* `$delay` (int): *optional* The time in seconds that the delivery of all new messages in the queue will be delayed. Allowed values: 0-9999999 (around 115 days)
+* `$vt` (int): *optional* * The length of time, in seconds, that a message received from a queue will be invisible to
+  other receiving components when they ask to receive messages. Allowed values: 0-9999999 (around 115 days)
+* `$delay` (int): *optional* The time in seconds that the delivery of all new messages in the queue will be delayed.
+  Allowed values: 0-9999999 (around 115 days)
 * `$maxsize` (int): *optional* The maximum message size in bytes. Allowed values: 1024-65536 and -1 (for unlimited size)
 
 Note: At least one attribute (vt, delay, maxsize) must be supplied. Only attributes that are supplied will be modified.
@@ -155,10 +170,12 @@ Returns an associative array:
 * `created` (float): Timestamp (epoch in seconds) when the queue was created
 * `modified` (float): Timestamp (epoch in seconds) when the queue was last modified with `setQueueAttributes`
 * `msgs` (int): Current number of messages in the queue
-* `hiddenmsgs` (int): Current number of hidden / not visible messages. A message can be hidden while "in flight" due to a `vt` parameter or when sent with a `delay`
+* `hiddenmsgs` (int): Current number of hidden / not visible messages. A message can be hidden while "in flight" due to
+  a `vt` parameter or when sent with a `delay`
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -175,20 +192,23 @@ $rsmq->setQueueAttributes($queue, $vt, $delay, $maxsize)
 ### Messages
 
 #### sendMessage
+
 Sends a new message.
 
 Parameters:
 
 * `$queue` (string)
 * `$message` (string)
-* `$delay` (int): *optional* *(Default: queue settings)* The time in seconds that the delivery of the message will be delayed. Allowed values: 0-9999999 (around 115 days)
+* `$delay` (int): *optional* *(Default: queue settings)* The time in seconds that the delivery of the message will be
+  delayed. Allowed values: 0-9999999 (around 115 days)
 
 Returns:
 
 * `$id` (string): The internal message id.
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -200,25 +220,28 @@ echo "Message Sent. ID: ", $id;
 ```
 
 #### receiveMessage
+
 Receive the next message from the queue.
 
 Parameters:
 
 * `$queue` (string): The Queue name.
-* `$vt` (int): *optional* *(Default: queue settings)* The length of time, in seconds, that the received message will be invisible to others. Allowed values: 0-9999999 (around 115 days)
+* `$vt` (int): *optional* *(Default: queue settings)* The length of time, in seconds, that the received message will be
+  invisible to others. Allowed values: 0-9999999 (around 115 days)
 
 Returns an associative array:
 
-  * `message` (string): The message's contents.
-  * `id` (string): The internal message id.
-  * `sent` (int): Timestamp of when this message was sent / created.
-  * `fr` (int): Timestamp of when this message was first received.
-  * `rc` (int): Number of times this message was received.
+* `message` (string): The message's contents.
+* `id` (string): The internal message id.
+* `sent` (int): Timestamp of when this message was sent / created.
+* `fr` (int): Timestamp of when this message was first received.
+* `rc` (int): Number of times this message was received.
 
-Note: Will return an empty array if no message is there  
+Note: Will return an empty array if no message is there
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -231,6 +254,7 @@ echo "Message: ", $message['message'];
 ```
 
 #### deleteMessage
+
 Parameters:
 
 * `$queue` (string): The Queue name.
@@ -241,7 +265,8 @@ Returns:
 * `true` if successful, `false` if the message was not found (bool).
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -253,9 +278,11 @@ $rsmq->deleteMessage($id);
 ```
 
 #### popMessage
+
 Receive the next message from the queue **and delete it**.
 
-**Important:** This method deletes the message it receives right away. There is no way to receive the message again if something goes wrong while working on the message.
+**Important:** This method deletes the message it receives right away. There is no way to receive the message again if
+something goes wrong while working on the message.
 
 Parameters:
 
@@ -263,16 +290,17 @@ Parameters:
 
 Returns an associvative array:
 
-  * `message` (string): The message's contents.
-  * `id` (string): The internal message id.
-  * `sent` (int): Timestamp of when this message was sent / created.
-  * `fr` (int): Timestamp of when this message was first received.
-  * `rc` (int): Number of times this message was received.
+* `message` (string): The message's contents.
+* `id` (string): The internal message id.
+* `sent` (int): Timestamp of when this message was sent / created.
+* `fr` (int): Timestamp of when this message was first received.
+* `rc` (int): Number of times this message was received.
 
 Note: Will return an empty object if no message is there
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -285,6 +313,7 @@ echo "Message: ", $message['message'];
 ```
 
 #### changeMessageVisibility
+
 Change the visibility timer of a single message.
 The time when the message will be visible again is calculated from the current time (now) + `vt`.
 
@@ -292,14 +321,16 @@ Parameters:
 
 * `qname` (string): The Queue name.
 * `id` (string): The message id.
-* `vt` (int): The length of time, in seconds, that this message will not be visible. Allowed values: 0-9999999 (around 115 days)
+* `vt` (int): The length of time, in seconds, that this message will not be visible. Allowed values: 0-9999999 (around
+  115 days)
 
-Returns: 
+Returns:
 
 * `true` if successful, `false` if the message was not found (bool).
 
 Throws:
-* `\Islambey\RSMQ\Exception`
+
+* `\PJM\RSMQ\Exception`
 
 Example:
 
@@ -314,4 +345,5 @@ if($rsmq->changeMessageVisibility($queue, $id, 60)) {
 ```
 
 ## LICENSE
+
 The MIT LICENSE. See [LICENSE](./LICENSE)
