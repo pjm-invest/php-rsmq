@@ -1,15 +1,15 @@
 <?php
-declare(strict_types=1);
 
-namespace Islambey\RSMQ;
+namespace ghwPluginV\PJM\RSMQ;
 
 use Redis;
+use RedisCluster;
 
 class RSMQ
 {
     const MAX_DELAY = 9999999;
     const MIN_MESSAGE_SIZE = 1024;
-    const MAX_PAYLOAD_SIZE = 65536;
+    const MAX_PAYLOAD_SIZE = 4194304; //4MB
 
     /**
      * @var Redis
@@ -41,17 +41,20 @@ class RSMQ
      */
     private $popMessageSha1;
 
+    private bool $cluster;
+
     /**
      * @var string
      */
     private $changeMessageVisibilitySha1;
 
-    public function __construct(Redis $redis, string $ns = 'rsmq', bool $realtime = false)
+    public function __construct(Redis|RedisCluster $redis, string $ns = 'rsmq', bool $realtime = false)
     {
-        $this->redis = $redis;
-        $this->ns = "$ns:";
-        $this->realtime = $realtime;
 
+        $this->redis = $redis;
+        $this->ns = "\{$ns:}";
+        $this->realtime = $realtime;
+        $this->cluster = $redis instanceof RedisCluster;
         $this->util = new Util();
 
         $this->initScripts();
@@ -68,13 +71,13 @@ class RSMQ
 
         $key = "{$this->ns}$name:Q";
 
-        $resp = $this->redis->time();
+
         $transaction = $this->redis->multi();
         $transaction->hSetNx($key, 'vt', (string)$vt);
         $transaction->hSetNx($key, 'delay', (string)$delay);
         $transaction->hSetNx($key, 'maxsize', (string)$maxSize);
-        $transaction->hSetNx($key, 'created', $resp[0]);
-        $transaction->hSetNx($key, 'modified', $resp[0]);
+        $transaction->hSetNx($key, 'created', $now = time());
+        $transaction->hSetNx($key, 'modified', $now);
         $resp = $transaction->exec();
 
         if (!$resp[0]) {
@@ -84,10 +87,7 @@ class RSMQ
         return (bool)$this->redis->sAdd("{$this->ns}QUEUES", $name);
     }
 
-    /**
-     * @return array<string>
-     */
-    public function listQueues(): array
+    public function listQueues()
     {
         return $this->redis->sMembers("{$this->ns}QUEUES");
     }
@@ -109,11 +109,6 @@ class RSMQ
         }
     }
 
-    /**
-     * @param string $queue
-     * @return array<string, mixed>
-     * @throws Exception
-     */
     public function getQueueAttributes(string $queue): array
     {
         $this->validate([
@@ -121,12 +116,12 @@ class RSMQ
         ]);
 
         $key = "{$this->ns}$queue";
-        $resp = $this->redis->time();
+
 
         $transaction = $this->redis->multi();
         $transaction->hMGet("$key:Q", ['vt', 'delay', 'maxsize', 'totalrecv', 'totalsent', 'created', 'modified']);
         $transaction->zCard($key);
-        $transaction->zCount($key, $resp[0] . '0000', "+inf");
+        $transaction->zCount($key, time() . '0000', "+inf");
         $resp = $transaction->exec();
 
         if ($resp[0]['vt'] === false) {
@@ -148,14 +143,7 @@ class RSMQ
         return $attributes;
     }
 
-    /**
-     * @param string $queue
-     * @param int|null $vt
-     * @param int|null $delay
-     * @param int|null $maxSize
-     * @return array<string, mixed>
-     * @throws Exception
-     */
+
     public function setQueueAttributes(string $queue, int $vt = null, int $delay = null, int $maxSize = null): array
     {
         $this->validate([
@@ -165,10 +153,10 @@ class RSMQ
         ]);
         $this->getQueue($queue);
 
-        $time = $this->redis->time();
+
         $transaction = $this->redis->multi();
 
-        $transaction->hSet("{$this->ns}$queue:Q", 'modified', $time[0]);
+        $transaction->hSet("{$this->ns}$queue:Q", 'modified', time());
         if ($vt !== null) {
             $transaction->hSet("{$this->ns}$queue:Q", 'vt', (string)$vt);
         }
@@ -186,13 +174,6 @@ class RSMQ
         return $this->getQueueAttributes($queue);
     }
 
-    /**
-     * @param string $queue
-     * @param string $message
-     * @param array<string, mixed> $options
-     * @return string
-     * @throws Exception
-     */
     public function sendMessage(string $queue, string $message, array $options = []): string
     {
         $this->validate([
@@ -226,12 +207,6 @@ class RSMQ
         return $q['uid'];
     }
 
-    /**
-     * @param string $queue
-     * @param array<string, mixed> $options
-     * @return array<string, mixed>
-     * @throws Exception
-     */
     public function receiveMessage(string $queue, array $options = []): array
     {
         $this->validate([
@@ -243,13 +218,19 @@ class RSMQ
 
         $args = [
             "{$this->ns}$queue",
+            "{$this->ns}$queue:Q",
             $q['ts'],
             $q['ts'] + $vt * 1000
         ];
-        $resp = $this->redis->evalSha($this->receiveMessageSha1, $args, 3);
+
+        $resp = $this->redis->evalSha($this->receiveMessageSha1, $args, 2);
+
+
         if (empty($resp)) {
             return [];
         }
+
+
         return [
             'id' => $resp[0],
             'message' => $resp[1],
@@ -259,11 +240,6 @@ class RSMQ
         ];
     }
 
-    /**
-     * @param string $queue
-     * @return array<string, mixed>
-     * @throws Exception
-     */
     public function popMessage(string $queue): array
     {
         $this->validate([
@@ -274,9 +250,13 @@ class RSMQ
 
         $args = [
             "{$this->ns}$queue",
+            "{$this->ns}$queue:Q",
             $q['ts'],
         ];
+
         $resp = $this->redis->evalSha($this->popMessageSha1, $args, 2);
+
+
         if (empty($resp)) {
             return [];
         }
@@ -297,6 +277,7 @@ class RSMQ
         ]);
 
         $key = "{$this->ns}$queue";
+
         $transaction = $this->redis->multi();
         $transaction->zRem($key, $id);
         $transaction->hDel("$key:Q", $id, "$id:rc", "$id:fr");
@@ -315,12 +296,13 @@ class RSMQ
 
         $q = $this->getQueue($queue, true);
 
-        $params = [
+        $args = [
             "{$this->ns}$queue",
             $id,
             $q['ts'] + $vt * 1000
         ];
-        $resp = $this->redis->evalSha($this->changeMessageVisibilitySha1, $params, 3);
+
+        $resp = $this->redis->evalSha($this->changeMessageVisibilitySha1, $args, 1);
 
         return (bool)$resp;
     }
@@ -328,8 +310,9 @@ class RSMQ
     /**
      * @param string $name
      * @param bool $uid
-     * @return array<string, mixed>
+     * @return array<string, int|string>
      * @throws Exception
+     * @throws \RedisException
      */
     private function getQueue(string $name, bool $uid = false): array
     {
@@ -337,28 +320,25 @@ class RSMQ
             'queue' => $name,
         ]);
 
-        $transaction = $this->redis->multi();
-        $transaction->hmget("{$this->ns}$name:Q", ['vt', 'delay', 'maxsize']);
-        $transaction->time();
-        $resp = $transaction->exec();
 
-        if ($resp[0]['vt'] === false) {
+        $resp = $this->redis->hMGet("{$this->ns}$name:Q", ['vt', 'delay', 'maxsize']);
+
+        if ($resp['vt'] === false) {
             throw new Exception('Queue not found.');
         }
 
-        $ms = $this->util->formatZeroPad((int)$resp[1][1], 6);
-
+        $ms = intval(floor(microtime(true) * 1000));
 
         $queue = [
-            'vt' => (int)$resp[0]['vt'],
-            'delay' => (int)$resp[0]['delay'],
-            'maxsize' => (int)$resp[0]['maxsize'],
-            'ts' => (int)($resp[1][0] . substr($ms, 0, 3)),
+            'vt' => (int)$resp['vt'],
+            'delay' => (int)$resp['delay'],
+            'maxsize' => (int)$resp['maxsize'],
+            'ts' => $ms,
         ];
 
         if ($uid) {
             $uid = $this->util->makeID(22);
-            $queue['uid'] = base_convert(($resp[1][0] . $ms), 10, 36) . $uid;
+            $queue['uid'] = base_convert($this->util->formatZeroPad($ms, 6), 10, 36) . $uid;
         }
 
         return $queue;
@@ -366,65 +346,70 @@ class RSMQ
 
     private function initScripts(): void
     {
-        $receiveMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", KEYS[2], "LIMIT", "0", "1")
+        $receiveMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", tonumber(ARGV[1]), "LIMIT", "0", "1")
 			if #msg == 0 then
 				return {}
 			end
-			redis.call("ZADD", KEYS[1], KEYS[3], msg[1])
-			redis.call("HINCRBY", KEYS[1] .. ":Q", "totalrecv", 1)
-			local mbody = redis.call("HGET", KEYS[1] .. ":Q", msg[1])
-			local rc = redis.call("HINCRBY", KEYS[1] .. ":Q", msg[1] .. ":rc", 1)
+			redis.call("ZADD", KEYS[1], ARGV[2], msg[1])
+			redis.call("HINCRBY", KEYS[2], "totalrecv", 1)
+			local mbody = redis.call("HGET", KEYS[2], msg[1])
+			local rc = redis.call("HINCRBY", KEYS[2], msg[1] .. ":rc", 1)
 			local o = {msg[1], mbody, rc}
 			if rc==1 then
-				redis.call("HSET", KEYS[1] .. ":Q", msg[1] .. ":fr", KEYS[2])
-				table.insert(o, KEYS[2])
+				redis.call("HSET", KEYS[2], msg[1] .. ":fr", tonumber(ARGV[1]))
+				table.insert(o, ARGV[1])
 			else
-				local fr = redis.call("HGET", KEYS[1] .. ":Q", msg[1] .. ":fr")
+				local fr = redis.call("HGET", KEYS[2], msg[1] .. ":fr")
 				table.insert(o, fr)
 			end
 			return o';
 
-        $popMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", KEYS[2], "LIMIT", "0", "1")
+        $popMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", ARGV[1], "LIMIT", "0", "1")
 			if #msg == 0 then
 				return {}
 			end
-			redis.call("HINCRBY", KEYS[1] .. ":Q", "totalrecv", 1)
-			local mbody = redis.call("HGET", KEYS[1] .. ":Q", msg[1])
-			local rc = redis.call("HINCRBY", KEYS[1] .. ":Q", msg[1] .. ":rc", 1)
+			redis.call("HINCRBY", KEYS[2], "totalrecv", 1)
+			local mbody = redis.call("HGET", KEYS[2], msg[1])
+			local rc = redis.call("HINCRBY", KEYS[2], msg[1] .. ":rc", 1)
 			local o = {msg[1], mbody, rc}
 			if rc==1 then
-				table.insert(o, KEYS[2])
+				table.insert(o, ARGV[1])
 			else
-				local fr = redis.call("HGET", KEYS[1] .. ":Q", msg[1] .. ":fr")
+				local fr = redis.call("HGET", KEYS[2], msg[1] .. ":fr")
 				table.insert(o, fr)
 			end
 			redis.call("ZREM", KEYS[1], msg[1])
-			redis.call("HDEL", KEYS[1] .. ":Q", msg[1], msg[1] .. ":rc", msg[1] .. ":fr")
+			redis.call("HDEL", KEYS[2], msg[1], msg[1] .. ":rc", msg[1] .. ":fr")
 			return o';
 
-        $changeMessageVisibilityScript = 'local msg = redis.call("ZSCORE", KEYS[1], KEYS[2])
+        $changeMessageVisibilityScript = 'local msg = redis.call("ZSCORE", KEYS[1], ARGV[1])
 			if not msg then
 				return 0
 			end
-			redis.call("ZADD", KEYS[1], KEYS[3], KEYS[2])
+			redis.call("ZADD", KEYS[1], ARGV[2], ARGV[1])
 			return 1';
+        if ($this->cluster) {
+            foreach ($this->redis->_masters() as $node) {
+                //hashes should always be the same
+                $this->receiveMessageSha1 = $this->redis->script($node, 'load', $receiveMessageScript);
+                $this->popMessageSha1 = $this->redis->script($node, 'load', $popMessageScript);
+                $this->changeMessageVisibilitySha1 = $this->redis->script($node, 'load', $changeMessageVisibilityScript);
+            }
+        } else {
+            $this->receiveMessageSha1 = $this->redis->script('load', $receiveMessageScript);
+            $this->popMessageSha1 = $this->redis->script('load', $popMessageScript);
+            $this->changeMessageVisibilitySha1 = $this->redis->script('load', $changeMessageVisibilityScript);
+        }
 
-        $this->receiveMessageSha1 = $this->redis->script('load', $receiveMessageScript);
-        $this->popMessageSha1 = $this->redis->script('load', $popMessageScript);
-        $this->changeMessageVisibilitySha1 = $this->redis->script('load', $changeMessageVisibilityScript);
     }
 
-    /**
-     * @param array<string, mixed> $params
-     * @throws Exception
-     */
     public function validate(array $params): void
     {
         if (isset($params['queue']) && !preg_match('/^([a-zA-Z0-9_-]){1,160}$/', $params['queue'])) {
             throw new Exception('Invalid queue name');
         }
 
-        if (isset($params['id']) && !preg_match('/^([a-zA-Z0-9:]){32}$/', $params['id'])) {
+        if (isset($params['id']) && !preg_match('/^([a-zA-Z0-9:]){30,32}$/', $params['id'])) {
             throw new Exception('Invalid message id');
         }
 
@@ -436,10 +421,10 @@ class RSMQ
             throw new Exception('Delay must be between 0 and ' . self::MAX_DELAY);
         }
 
-        if (isset($params['maxsize']) &&
-            ($params['maxsize'] < self::MIN_MESSAGE_SIZE || $params['maxsize'] > self::MAX_PAYLOAD_SIZE)) {
-            $message = "Maximum message size must be between %d and %d";
-            throw new Exception(sprintf($message, self::MIN_MESSAGE_SIZE, self::MAX_PAYLOAD_SIZE));
+        if (isset($params['maxsize']) && ($params['maxsize'] < self::MIN_MESSAGE_SIZE || $params['maxsize'] > self::MAX_PAYLOAD_SIZE)) {
+            throw new Exception('Maximum message size must be between ' . self::MIN_MESSAGE_SIZE . ' and ' . self::MAX_PAYLOAD_SIZE);
         }
+
+
     }
 }

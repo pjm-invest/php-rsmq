@@ -1,7 +1,7 @@
 <?php
 
 use PHPUnit\Framework\TestCase;
-use Islambey\RSMQ\Util;
+use PJM\RSMQ\Util;
 
 class UtilTest extends TestCase
 {
@@ -10,7 +10,7 @@ class UtilTest extends TestCase
      */
     private $util;
 
-    public function setUp():void
+    public function setUp(): void
     {
         $this->util = new Util();
     }

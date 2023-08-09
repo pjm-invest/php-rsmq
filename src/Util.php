@@ -1,6 +1,6 @@
 <?php
 
-namespace Islambey\RSMQ;
+namespace ghwPluginV\PJM\RSMQ;
 
 class Util
 {
@@ -18,7 +18,7 @@ class Util
 
     public function formatZeroPad(int $num, int $count): string
     {
-        $numStr = (string) (pow(10, $count) + $num);
+        $numStr = (string)(pow(10, $count) + $num);
         return substr($numStr, 1);
     }
 }

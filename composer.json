@@ -1,22 +1,26 @@
 {
-  "name": "eislambey/rsmq",
+  "name": "pjm-invest/php-rsmq",
   "description": "Redis Simple Message Queue.",
   "type": "library",
   "license": "MIT",
   "authors": [
+    {
+      "name": "PJM Investment Akademie",
+      "email": "info@pjmueller.de"
+    },
     {
       "name": "emre can islambey",
       "email": "eislambey@gmail.com"
     }
   ],
   "require": {
-    "php": "^7.2",
+    "php": "^8.0",
     "ext-redis": "*",
     "ext-mbstring": "*"
   },
   "autoload": {
     "psr-4": {
-      "Islambey\\RSMQ\\": "src/"
+      "PJM\\RSMQ\\": "src/"
     }
   },
   "require-dev": {
@@ -24,7 +28,9 @@
     "phpstan/phpstan": "^0.11.12 || ^0.12.0"
   },
   "autoload-dev": {
-    "classmap": ["tests/"]
+    "classmap": [
+      "tests/"
+    ]
   },
   "scripts": {
     "test": "phpunit",
