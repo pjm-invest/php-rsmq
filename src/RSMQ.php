@@ -31,28 +31,30 @@ class RSMQ
      */
     private $util;
 
+    private string $receiveMessageLua;
     /**
      * @var string
      */
     private $receiveMessageSha1;
-
+    private string $popMessageLua;
     /**
      * @var string
      */
     private $popMessageSha1;
 
-    private bool $cluster;
 
+    private string $changeMessageVisibilityLua;
     /**
      * @var string
      */
     private $changeMessageVisibilitySha1;
+    private bool $cluster;
 
     public function __construct(Redis|RedisCluster $redis, string $ns = 'rsmq', bool $realtime = false)
     {
 
         $this->redis = $redis;
-        $this->ns = "\{$ns:}";
+        $this->ns = "$ns:";
         $this->realtime = $realtime;
         $this->cluster = $redis instanceof RedisCluster;
         $this->util = new Util();
@@ -209,6 +211,7 @@ class RSMQ
 
     public function receiveMessage(string $queue, array $options = []): array
     {
+
         $this->validate([
             'queue' => $queue,
         ]);
@@ -223,7 +226,7 @@ class RSMQ
             $q['ts'] + $vt * 1000
         ];
 
-        $resp = $this->redis->evalSha($this->receiveMessageSha1, $args, 2);
+        $resp = $this->redis_eval($this->receiveMessageLua, $args, 2);
 
 
         if (empty($resp)) {
@@ -254,7 +257,7 @@ class RSMQ
             $q['ts'],
         ];
 
-        $resp = $this->redis->evalSha($this->popMessageSha1, $args, 2);
+        $resp = $this->redis_eval($this->popMessageLua, $args, 2);
 
 
         if (empty($resp)) {
@@ -302,7 +305,8 @@ class RSMQ
             $q['ts'] + $vt * 1000
         ];
 
-        $resp = $this->redis->evalSha($this->changeMessageVisibilitySha1, $args, 1);
+        $resp = $this->redis_eval($this->changeMessageVisibilityLua, $args, 1);
+
 
         return (bool)$resp;
     }
@@ -344,9 +348,27 @@ class RSMQ
         return $queue;
     }
 
+    private function redis_eval(string $script, array $args, int $keys)
+    {
+        $client = $this->redis;
+        $sha1 = sha1($script);
+
+        $rsp = $client->evalSha($sha1, $args, $keys);
+        if ($rsp === false && is_string($error = $client->getLastError()) && str_starts_with($error, 'NOSCRIPT')) {
+            $client->clearLastError();
+
+            return $client->eval($script, $args, $keys);
+        }
+
+        return $rsp;
+    }
+
+    /**
+     * @throws \RedisException
+     */
     private function initScripts(): void
     {
-        $receiveMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", tonumber(ARGV[1]), "LIMIT", "0", "1")
+        $this->receiveMessageLua = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", ARGV[1], "LIMIT", "0", "1")
 			if #msg == 0 then
 				return {}
 			end
@@ -356,7 +378,7 @@ class RSMQ
 			local rc = redis.call("HINCRBY", KEYS[2], msg[1] .. ":rc", 1)
 			local o = {msg[1], mbody, rc}
 			if rc==1 then
-				redis.call("HSET", KEYS[2], msg[1] .. ":fr", tonumber(ARGV[1]))
+				redis.call("HSET", KEYS[2], msg[1] .. ":fr", ARGV[1])
 				table.insert(o, ARGV[1])
 			else
 				local fr = redis.call("HGET", KEYS[2], msg[1] .. ":fr")
@@ -364,7 +386,7 @@ class RSMQ
 			end
 			return o';
 
-        $popMessageScript = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", ARGV[1], "LIMIT", "0", "1")
+        $this->popMessageLua = 'local msg = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", ARGV[1], "LIMIT", "0", "1")
 			if #msg == 0 then
 				return {}
 			end
@@ -379,30 +401,24 @@ class RSMQ
 				table.insert(o, fr)
 			end
 			redis.call("ZREM", KEYS[1], msg[1])
-			redis.call("HDEL", KEYS[2], msg[1], msg[1] .. ":rc", msg[1] .. ":fr")
+			redis.call("HDEL", KEYS[2], msg[1], msg[1] .. ":rc", msg[1] .. ":fr") 
 			return o';
 
-        $changeMessageVisibilityScript = 'local msg = redis.call("ZSCORE", KEYS[1], ARGV[1])
+        $this->changeMessageVisibilityLua = 'local msg = redis.call("ZSCORE", KEYS[1], ARGV[1])
 			if not msg then
 				return 0
 			end
 			redis.call("ZADD", KEYS[1], ARGV[2], ARGV[1])
 			return 1';
-        if ($this->cluster) {
-            foreach ($this->redis->_masters() as $node) {
-                //hashes should always be the same
-                $this->receiveMessageSha1 = $this->redis->script($node, 'load', $receiveMessageScript);
-                $this->popMessageSha1 = $this->redis->script($node, 'load', $popMessageScript);
-                $this->changeMessageVisibilitySha1 = $this->redis->script($node, 'load', $changeMessageVisibilityScript);
-            }
-        } else {
-            $this->receiveMessageSha1 = $this->redis->script('load', $receiveMessageScript);
-            $this->popMessageSha1 = $this->redis->script('load', $popMessageScript);
-            $this->changeMessageVisibilitySha1 = $this->redis->script('load', $changeMessageVisibilityScript);
-        }
+        $this->receiveMessageSha1 = sha1($this->receiveMessageLua);
+        $this->popMessageSha1 = sha1($this->popMessageLua);
+        $this->changeMessageVisibilitySha1 = sha1($this->changeMessageVisibilityLua);
 
     }
 
+    /**
+     * @throws Exception
+     */
     public function validate(array $params): void
     {
         if (isset($params['queue']) && !preg_match('/^([a-zA-Z0-9_-]){1,160}$/', $params['queue'])) {
